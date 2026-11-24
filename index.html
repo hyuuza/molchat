@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Onkraj — a sound walk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* VOICE: quiet, nocturnal, an artwork rather than a dashboard.
+   IDEA: a seismograph drawn by footsteps: the route is the paper, the sound is the ink.
+   PICTURE: the walk itself, full screen, every second of audio pressed into the line as a glowing dot.
+   COLOUR and TYPE: river-slate ground, bone line, coral for rumble, ice for hiss; Instrument Serif + Inter.
+   LAYOUT: map fills the screen, title floats top-left, a single control strip along the bottom. */
+:root{color-scheme:dark;--bg:#0c1315;--ink:#e9e3d0;--dim:#8a9692;--line:rgba(233,227,208,.14);--coral:#ef7a5a;--ice:#a6e6f2;--panel:rgba(12,19,21,.82)}
+*{box-sizing:border-box;min-width:0}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Inter,system-ui,sans-serif;overflow:hidden}
+#stage{position:fixed;inset:0;display:grid;grid-template-rows:minmax(0,1fr) auto}
+#wrap{position:relative;cursor:crosshair;touch-action:manipulation}
+#map{position:absolute;inset:0;width:100%;height:100%;display:block}
+header{position:absolute;left:max(4vw,16px);top:clamp(16px,3vw,36px);max-width:min(540px,86vw);pointer-events:none;text-shadow:0 0 12px #0c1315,0 0 4px #0c1315}
+h1{font:400 clamp(36px,5vw,60px)/1 "Instrument Serif",serif;margin:0 0 8px;letter-spacing:-.01em}
+h1 i{color:var(--dim)}
+header p{margin:0;color:var(--dim);font-size:15px;text-wrap:pretty}
+#legend{position:absolute;right:max(4vw,16px);top:clamp(16px,3vw,36px);display:flex;gap:14px;font-size:13px;color:var(--dim);flex-wrap:wrap;justify-content:flex-end;pointer-events:none}
+#legend span::before{content:"";display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:0;background:var(--c)}
+#views{position:absolute;right:max(4vw,16px);bottom:16px;display:flex;gap:6px}
+button,.file{font:500 14px Inter,sans-serif;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:22px;min-height:44px;padding:0 16px;cursor:pointer}
+button:hover,.file:hover{border-color:rgba(233,227,208,.4)}
+button:focus-visible,.file:focus-within,input:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
+button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
+#status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:14px;color:var(--dim);pointer-events:none}
+.bar{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:clamp(12px,2vw,24px);align-items:center;padding:14px max(4vw,16px) 16px;background:var(--panel);border-top:1px solid var(--line)}
+#play{width:56px;height:56px;padding:0;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center}
+#play svg{width:22px;height:22px}
+.clock b{display:block;font:400 34px/1 "Instrument Serif",serif;font-variant-numeric:tabular-nums;white-space:nowrap}
+.clock small,.stats small{color:var(--dim);font-size:13px;white-space:nowrap}
+#tlw{position:relative;height:48px;cursor:pointer;touch-action:none}
+#tl{position:absolute;inset:0;width:100%;height:100%}
+.stats{display:grid;grid-template-columns:auto auto;gap:0 16px;text-align:right;font-variant-numeric:tabular-nums}
+.stats b{font-weight:500;white-space:nowrap}
+details{grid-column:1/-1;font-size:14px;color:var(--dim)}
+summary{cursor:pointer;min-height:28px;display:inline-flex;align-items:center}
+.opts{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;padding-top:8px}
+.opts label{display:flex;gap:10px;align-items:center}
+input[type=range]{width:200px;accent-color:var(--coral)}
+.file input{position:absolute;opacity:0;width:1px;height:1px}
+.file{display:inline-flex;align-items:center;position:relative}
+@media(max-width:700px){
+ .bar{grid-template-columns:auto minmax(0,1fr);row-gap:10px}
+ #tlw{grid-column:1/-1;grid-row:2}
+ .stats{grid-column:1/-1;grid-row:3;grid-template-columns:repeat(4,auto);justify-content:space-between;text-align:left}
+ #legend{display:none}
+ #views{bottom:10px}
+}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div id="stage">
+ <div id="wrap">
+  <canvas id="map" aria-label="Map of the walk, coloured by the sound recorded at each point"></canvas>
+  <header>
+   <h1>Onkraj <i>· a sound walk</i></h1>
+   <p>Tuesday 24 November 2026, 09:18–12:33, 12.5 km on foot. Every dot on the line is one second of the recording, placed where it was heard. Press play to walk it again, or click anywhere on the line to listen there.</p>
+  </header>
+  <div id="legend"><span style="--c:var(--coral)">low rumble</span><span style="--c:#e9d9a6">voices, mid</span><span style="--c:var(--ice)">hiss, high</span><span style="--c:transparent">size = loudness</span></div>
+  <div id="status">Loading the walk…</div>
+  <div id="views"><button id="vAll" aria-pressed="true">Whole walk</button><button id="vFol" aria-pressed="false">Follow</button></div>
+ </div>
+ <div class="bar">
+  <button id="play" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor"><path id="pi" d="M7 4l13 8-13 8z"/></svg></button>
+  <div class="clock"><b id="clk">09:18:54</b><small id="el">0:00:00 of 3:11:06</small></div>
+  <div id="tlw" aria-label="Timeline: loudness over the whole recording. Click or drag to jump."><canvas id="tl"></canvas></div>
+  <div class="stats"><small>walked</small><b id="km">0.00 km</b><small>elevation</small><b id="ele">191 m</b></div>
+  <details><summary>Sync and sound quality</summary>
+   <div class="opts">
+    <label>Sound offset <input id="off" type="range" min="-300" max="300" step="1" value="0"> <b id="offv">0 s</b></label>
+    <span>The recording is about 3 minutes shorter than the GPS track. If sounds land in the wrong place, nudge them.</span>
+    <label class="file">Use the original MP3 (full quality)<input id="file" type="file" accept="audio/*"></label>
+   </div>
+  </details>
+ </div>
+</div>
+<script>
+{
+const $=s=>document.querySelector(s);
+const cv=$('#map'),ctx=cv.getContext('2d'),tl=$('#tl'),tx=tl.getContext('2d'),wrap=$('#wrap'),stat=$('#status');
+const CH=900,NB=9;
+let D,T,L,B,P=[],buckets=[],dur=0,offset=0,follow=false,rot=false;
+let W=0,H=0,TW=0,TH=0,dpr=1,cam=null,tlPix=[],box=[0,0];
+let mode='chunks',parts=[],cur=0,curIdx=-1,nextIdx=-1,playing=false,g=0,dragT=null;
+const els=[new Audio(),new Audio()];
+let ac=null,an=null,fbuf,tbuf,avg=0,lastRing=0,rings=[];
+
+const stops=[[239,122,90],[233,217,166],[166,230,242]];
+const col=(f,a)=>{const k=f<.5?0:1,u=f<.5?f*2:(f-.5)*2,c=stops[k].map((v,i)=>Math.round(v+(stops[k+1][i]-v)*u));return `rgba(${c},${a})`};
+const fmt=s=>{s=Math.max(0,Math.floor(s));return `${Math.floor(s/3600)}:${String(Math.floor(s/60)%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`};
+const tod=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Ljubljana',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+
+function pos(tt){
+ let lo=0,hi=T.length-1;
+ if(tt<=T[0][0])return T[0];if(tt>=T[hi][0])return T[hi];
+ while(hi-lo>1){const m=(lo+hi)>>1;if(T[m][0]<=tt)lo=m;else hi=m}
+ const a=T[lo],b=T[hi],f=(tt-a[0])/(b[0]-a[0]||1);
+ return [tt,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f,a[3]+(b[3]-a[3])*f,a[4]+(b[4]-a[4])*f];
+}
+function buildImprint(){
+ P=L.map((_,s)=>pos(s+.5+offset));
+ buckets=Array.from({length:NB},()=>[]);
+ L.forEach((_,s)=>buckets[Math.min(NB-1,Math.floor(B[s]/100*NB))].push(s));
+}
+function audioTime(){
+ if(dragT!=null)return dragT;
+ if(mode==='file')return els[cur].currentTime||g;
+ return curIdx<0?g:curIdx*CH+(els[cur].currentTime||0);
+}
+function setTime(a,t){if(a.readyState>=1)a.currentTime=t;else a.addEventListener('loadedmetadata',()=>{a.currentTime=t},{once:true})}
+function seek(t){
+ t=Math.max(0,Math.min(dur-.5,t));g=t;
+ if(mode==='file'){setTime(els[cur],t);if(playing)els[cur].play().catch(()=>{});return}
+ const i=Math.floor(t/CH),loc=t-i*CH;
+ if(i!==curIdx){
+  els[cur].pause();
+  if(nextIdx===i)cur=1-cur;else els[cur].src=parts[i];
+  curIdx=i;nextIdx=-1;
+ }
+ setTime(els[cur],loc);
+ if(playing)els[cur].play().catch(()=>{});
+}
+function initAC(){
+ if(ac)return;
+ try{
+  ac=new(window.AudioContext||window.webkitAudioContext)();
+  an=ac.createAnalyser();an.fftSize=1024;an.smoothingTimeConstant=.8;
+  els.forEach(a=>ac.createMediaElementSource(a).connect(an));
+  an.connect(ac.destination);
+  fbuf=new Uint8Array(an.frequencyBinCount);tbuf=new Uint8Array(an.fftSize);
+ }catch(e){an=null}
+}
+function setPlay(p){
+ playing=p;$('#play').setAttribute('aria-label',p?'Pause':'Play');
+ $('#pi').setAttribute('d',p?'M6 4h4v16H6zM14 4h4v16h-4z':'M7 4l13 8-13 8z');
+}
+function toggle(){
+ initAC();if(ac&&ac.state==='suspended')ac.resume();
+ if(!playing){
+  setPlay(true);
+  if(mode==='chunks'&&curIdx<0)seek(g);
+  else els[cur].play().catch(()=>{setPlay(false);stat.textContent='The browser blocked playback. Press play again.'});
+ }else{g=audioTime();els[cur].pause();setPlay(false)}
+}
+els.forEach(a=>{
+ a.preload='auto';
+ a.addEventListener('ended',()=>{
+  if(a!==els[cur])return;
+  if(mode==='chunks'&&curIdx+1<parts.length)seek((curIdx+1)*CH);else setPlay(false);
+ });
+ a.addEventListener('waiting',()=>{if(a===els[cur]&&playing)stat.textContent='Loading sound…'});
+ a.addEventListener('playing',()=>{if(a===els[cur])stat.textContent=''});
+});
+
+function resize(){
+ dpr=Math.min(2,devicePixelRatio||1);
+ W=wrap.clientWidth;H=wrap.clientHeight;cv.width=W*dpr;cv.height=H*dpr;
+ TW=tl.clientWidth;TH=tl.clientHeight;tl.width=TW*dpr;tl.height=TH*dpr;
+ rot=H>W*1.15;
+ const hb=document.querySelector('header').getBoundingClientRect().bottom-wrap.getBoundingClientRect().top+20;
+ box=(H-hb-90>H*.45)?[hb,H-90]:[24,H-90];
+ if(L){const n=Math.max(1,Math.floor(TW/3));tlPix=Array.from({length:n},(_,i)=>{let m=0;const a=Math.floor(i/n*L.length),b=Math.floor((i+1)/n*L.length);for(let s=a;s<b;s++)m=Math.max(m,L[s]);return m/99})}
+ cam=null;
+}
+function target(h){
+ const w=D.w,hh=D.h,bh=box[1]-box[0],oy=(box[0]+box[1])/2;
+ const s0=rot?Math.min((W-48)/hh,bh/w):Math.min((W-96)/w,bh/hh);
+ if(!follow)return{x:w/2,y:hh/2,s:s0,oy};
+ return{x:h[1],y:h[2],s:Math.max(s0*2.5,Math.min(W,H)/450),oy};
+}
+const sc=(x,y)=>rot?[W/2-(y-cam.y)*cam.s,cam.oy-(x-cam.x)*cam.s]:[W/2+(x-cam.x)*cam.s,cam.oy-(y-cam.y)*cam.s];
+
+function level(s){
+ if(an&&playing){an.getByteTimeDomainData(tbuf);let q=0;for(const v of tbuf){const d=(v-128)/128;q+=d*d}return Math.min(1,Math.sqrt(q/tbuf.length)*5)}
+ return (L[s]||0)/99*.6;
+}
+let hudT=0;
+function frame(ts){
+ requestAnimationFrame(frame);
+ if(!T)return;
+ const t=audioTime(),s=Math.floor(t),h=pos(t+offset);
+ if(mode==='chunks'&&playing&&curIdx>=0&&curIdx+1<parts.length&&els[cur].currentTime>CH-40&&nextIdx!==curIdx+1){
+  const o=els[1-cur];o.src=parts[curIdx+1];o.load();nextIdx=curIdx+1;
+ }
+ const tg=target(h);
+ if(!cam)cam={...tg};else{const k=follow?.1:.08;cam.x+=(tg.x-cam.x)*k;cam.y+=(tg.y-cam.y)*k;cam.s+=(tg.s-cam.s)*k;cam.oy+=(tg.oy-cam.oy)*k}
+ ctx.setTransform(dpr,0,0,dpr,0,0);ctx.globalCompositeOperation='source-over';
+ ctx.fillStyle='#0c1315';ctx.fillRect(0,0,W,H);
+ // route
+ ctx.lineJoin=ctx.lineCap='round';
+ ctx.beginPath();T.forEach((p,i)=>{const[x,y]=sc(p[1],p[2]);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});
+ ctx.strokeStyle='rgba(233,227,208,.13)';ctx.lineWidth=1;ctx.stroke();
+ // imprint
+ ctx.globalCompositeOperation='lighter';
+ const zf=Math.min(3,Math.max(.7,Math.sqrt(cam.s*6)));
+ for(let b=0;b<NB;b++){
+  const list=buckets[b],c=(b+.5)/NB;
+  for(const heard of [false,true]){
+   ctx.beginPath();
+   for(const i of list){
+    if((i<s)!==heard)continue;
+    const p=P[i],[x,y]=sc(p[1],p[2]),l=L[i]/99,r=(.5+l*l*6)*zf;
+    if(x<-20||y<-20||x>W+20||y>H+20)continue;
+    ctx.moveTo(x+r,y);ctx.arc(x,y,r,0,6.2832);
+   }
+   ctx.fillStyle=col(c,heard?.42:.06);ctx.fill();
+  }
+ }
+ // heard line
+ ctx.globalCompositeOperation='source-over';
+ ctx.beginPath();let started=false;
+ for(const p of T){if(p[0]>t+offset)break;const[x,y]=sc(p[1],p[2]);started?ctx.lineTo(x,y):ctx.moveTo(x,y);started=true}
+ if(started){const[x,y]=sc(h[1],h[2]);ctx.lineTo(x,y)}
+ ctx.strokeStyle='rgba(233,227,208,.55)';ctx.lineWidth=1.4;ctx.stroke();
+ // walker: rings, spectrum halo, dot
+ const[hx,hy]=sc(h[1],h[2]),lv=level(s);
+ avg+=(lv-avg)*.04;
+ if(playing&&lv>avg*1.3+.015&&ts-lastRing>220){rings.push({x:h[1],y:h[2],t:ts,a:Math.min(1,lv*1.6),c:(B[s]||50)/99});lastRing=ts}
+ ctx.globalCompositeOperation='lighter';
+ rings=rings.filter(r=>ts-r.t<2600);
+ for(const r of rings){const age=(ts-r.t)/2600,[x,y]=sc(r.x,r.y);ctx.beginPath();ctx.arc(x,y,6+age*90*Math.min(2,zf),0,6.2832);ctx.strokeStyle=col(r.c,(1-age)**2*r.a*.8);ctx.lineWidth=1.2;ctx.stroke()}
+ if(an&&playing){
+  an.getByteFrequencyData(fbuf);const n=64;
+  ctx.beginPath();
+  for(let i=0;i<n;i++){
+   const a0=Math.floor(2*Math.pow(fbuf.length/2/2,i/n)),a1=Math.max(a0+1,Math.floor(2*Math.pow(fbuf.length/2/2,(i+1)/n)));
+   let m=0;for(let k=a0;k<a1;k++)m=Math.max(m,fbuf[k]);
+   const ang=i/n*6.2832-1.5708,r0=11,r1=r0+m/255*46;
+   ctx.moveTo(hx+Math.cos(ang)*r0,hy+Math.sin(ang)*r0);ctx.lineTo(hx+Math.cos(ang)*r1,hy+Math.sin(ang)*r1);
+  }
+  ctx.strokeStyle=col((B[s]||50)/99,.55);ctx.lineWidth=2;ctx.stroke();
+ }
+ ctx.globalCompositeOperation='source-over';
+ const gr=ctx.createRadialGradient(hx,hy,0,hx,hy,26+lv*30);gr.addColorStop(0,'rgba(239,122,90,.55)');gr.addColorStop(1,'rgba(239,122,90,0)');
+ ctx.fillStyle=gr;ctx.beginPath();ctx.arc(hx,hy,26+lv*30,0,6.2832);ctx.fill();
+ ctx.beginPath();ctx.arc(hx,hy,5,0,6.2832);ctx.fillStyle='#fff';ctx.fill();
+ // north arrow + scale bar
+ drawCompass();
+ // timeline
+ tx.setTransform(dpr,0,0,dpr,0,0);tx.clearRect(0,0,TW,TH);
+ const n=tlPix.length,px=t/dur*TW;
+ for(let i=0;i<n;i++){const x=i/n*TW,v=tlPix[i],bh=Math.max(1,v*v*(TH-6));tx.fillStyle=x<px?'rgba(239,122,90,.9)':'rgba(233,227,208,.22)';tx.fillRect(x,(TH-bh)/2,Math.max(1,TW/n-1),bh)}
+ tx.fillStyle='#fff';tx.fillRect(px-1,0,2,TH);
+ if(ts-hudT>200){
+  hudT=ts;
+  $('#clk').textContent=tod.format(new Date(Date.parse(D.start)+(t+offset)*1000));
+  $('#el').textContent=`${fmt(t)} of ${fmt(dur)}`;
+  $('#km').textContent=(h[4]/1000).toFixed(2)+' km';
+  $('#ele').textContent=Math.round(h[3])+' m';
+ }
+}
+function drawCompass(){
+ const x=W-(innerWidth>700?50:34),y=innerWidth>700?100:40;
+ ctx.save();ctx.translate(x,y);if(rot)ctx.rotate(-Math.PI/2);
+ ctx.strokeStyle='rgba(233,227,208,.5)';ctx.fillStyle='rgba(233,227,208,.7)';ctx.lineWidth=1;
+ ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(5,6);ctx.lineTo(0,2);ctx.lineTo(-5,6);ctx.closePath();ctx.fill();
+ ctx.font='500 12px Inter,sans-serif';ctx.textAlign='center';ctx.fillText('N',0,-20);ctx.restore();
+ const nice=[25,50,100,200,500,1000,2000];let m=nice.find(v=>v*cam.s>=90)||2000;const len=m*cam.s;
+ const bx=innerWidth>700?max4():16,by=H-(innerWidth>700?30:64);
+ ctx.fillStyle='rgba(233,227,208,.6)';ctx.fillRect(bx,by,len,1.5);ctx.fillRect(bx,by-4,1.5,9);ctx.fillRect(bx+len-1.5,by-4,1.5,9);
+ ctx.font='12px Inter,sans-serif';ctx.textAlign='left';ctx.fillText(m>=1000?m/1000+' km':m+' m',bx,by-8);
+}
+const max4=()=>Math.max(innerWidth*.04,16);
+
+// interaction: map click seeks to the nearest point on the line
+let down=null;
+cv.addEventListener('pointerdown',e=>{down=[e.clientX,e.clientY]});
+cv.addEventListener('pointerup',e=>{
+ if(!down||!T)return;const r=cv.getBoundingClientRect(),dx=e.clientX-down[0],dy=e.clientY-down[1];down=null;
+ if(dx*dx+dy*dy>36)return;
+ const px=e.clientX-r.left,py=e.clientY-r.top;let best=null,bd=28*28;
+ for(const p of T){const[x,y]=sc(p[1],p[2]),d=(x-px)**2+(y-py)**2;if(d<bd){bd=d;best=p}}
+ if(best){seek(best[0]-offset);if(!playing)toggle()}
+});
+cv.addEventListener('pointermove',e=>{
+ if(!T)return;const r=cv.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;let near=false;
+ for(let i=0;i<T.length;i+=2){const[x,y]=sc(T[i][1],T[i][2]);if((x-px)**2+(y-py)**2<400){near=true;break}}
+ cv.style.cursor=near?'pointer':'default';
+});
+const tlw=$('#tlw');
+const tlAt=e=>{const r=tlw.getBoundingClientRect();return Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*dur};
+tlw.addEventListener('pointerdown',e=>{tlw.setPointerCapture(e.pointerId);dragT=tlAt(e)});
+tlw.addEventListener('pointermove',e=>{if(dragT!=null)dragT=tlAt(e)});
+tlw.addEventListener('pointerup',e=>{if(dragT==null)return;const t=tlAt(e);dragT=null;seek(t)});
+$('#play').addEventListener('click',toggle);
+const setView=f=>{follow=f;$('#vAll').setAttribute('aria-pressed',!f);$('#vFol').setAttribute('aria-pressed',f)};
+$('#vAll').addEventListener('click',()=>setView(false));
+$('#vFol').addEventListener('click',()=>setView(true));
+$('#off').addEventListener('input',e=>{offset=+e.target.value;$('#offv').textContent=(offset>0?'+':'')+offset+' s';buildImprint()});
+$('#file').addEventListener('change',e=>{
+ const f=e.target.files[0];if(!f)return;
+ const t=audioTime();els.forEach(a=>a.pause());
+ mode='file';cur=0;curIdx=-1;nextIdx=-1;els[0].src=URL.createObjectURL(f);
+ els[0].addEventListener('loadedmetadata',()=>{dur=els[0].duration;setTime(els[0],Math.min(t,dur-1));if(playing)els[0].play().catch(()=>{})},{once:true});
+ stat.textContent='';
+});
+addEventListener('keydown',e=>{
+ if(e.target.matches('input'))return;
+ if(e.code==='Space'){e.preventDefault();toggle()}
+ else if(e.key==='ArrowRight')seek(audioTime()+15);
+ else if(e.key==='ArrowLeft')seek(audioTime()-15);
+ else if(e.key==='f')setView(!follow);
+});
+const ro=new ResizeObserver(resize);ro.observe(wrap);ro.observe(tlw);
+
+fetch('data.json').then(r=>r.json()).then(d=>{
+ D=d;T=d.track;L=d.loud;B=d.bright;dur=d.dur;
+ D.w=Math.max(...T.map(p=>p[1]));D.h=Math.max(...T.map(p=>p[2]));
+ parts=Array.from({length:d.parts},(_,i)=>`audio/part_${String(i).padStart(2,'0')}.webm`);
+ buildImprint();resize();stat.textContent='';
+}).catch(()=>{stat.textContent='Could not load the walk data.'});
+if(window.matchMedia('(max-width:700px)').matches)setView(true);
+requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>
