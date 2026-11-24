@@ -17,8 +17,9 @@
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Inter,system-ui,sans-serif;overflow:hidden}
 #stage{position:fixed;inset:0;display:grid;grid-template-rows:minmax(0,1fr) auto}
-#wrap{position:relative;cursor:crosshair;touch-action:manipulation}
-#map{position:absolute;inset:0;width:100%;height:100%;display:block}
+#wrap{position:relative;touch-action:none}
+#map{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#map.drag{cursor:grabbing}#zoom{display:flex;gap:6px}#zoom button{width:44px;padding:0;font-size:20px;line-height:1}
 header{position:absolute;left:max(4vw,16px);top:clamp(16px,3vw,36px);max-width:min(540px,86vw);pointer-events:none;text-shadow:0 0 12px #0c1315,0 0 4px #0c1315}
 h1{font:400 clamp(36px,5vw,60px)/1 "Instrument Serif",serif;margin:0 0 8px;letter-spacing:-.01em}
 h1 i{color:var(--dim)}
@@ -63,11 +64,11 @@ input[type=range]{width:200px;accent-color:var(--coral)}
   <canvas id="map" aria-label="Map of the walk, coloured by the sound recorded at each point"></canvas>
   <header>
    <h1>Onkraj <i>· a sound walk</i></h1>
-   <p>Tuesday 24 November 2026, 09:18–12:33, 12.5 km on foot. Every dot on the line is one second of the recording, placed where it was heard. Press play to walk it again, or click anywhere on the line to listen there.</p>
+   <p>Tuesday 24 November 2026, 09:18–12:33, 12.5 km on foot. Every dot on the line is one second of the recording, placed where it was heard. Press play to walk it again, click the line to listen there, drag to move around, scroll or pinch to zoom.</p>
   </header>
   <div id="legend"><span style="--c:var(--coral)">low rumble</span><span style="--c:#e9d9a6">voices, mid</span><span style="--c:var(--ice)">hiss, high</span><span style="--c:transparent">size = loudness</span></div>
   <div id="status">Loading the walk…</div>
-  <div id="views"><button id="vAll" aria-pressed="true">Whole walk</button><button id="vFol" aria-pressed="false">Follow</button></div>
+  <div id="views"><span id="zoom"><button id="zIn" aria-label="Zoom in">+</button><button id="zOut" aria-label="Zoom out">−</button></span><button id="vAll" aria-pressed="true">Whole walk</button><button id="vFol" aria-pressed="false">Follow</button></div>
  </div>
  <div class="bar">
   <button id="play" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor"><path id="pi" d="M7 4l13 8-13 8z"/></svg></button>
@@ -88,7 +89,7 @@ input[type=range]{width:200px;accent-color:var(--coral)}
 const $=s=>document.querySelector(s);
 const cv=$('#map'),ctx=cv.getContext('2d'),tl=$('#tl'),tx=tl.getContext('2d'),wrap=$('#wrap'),stat=$('#status');
 const CH=900,NB=9;
-let D,T,L,B,P=[],buckets=[],dur=0,offset=0,follow=false,rot=false;
+let D,T,L,B,P=[],buckets=[],dur=0,offset=0,follow=false,free=false,rot=false;
 let W=0,H=0,TW=0,TH=0,dpr=1,cam=null,tlPix=[],box=[0,0];
 let mode='chunks',parts=[],cur=0,curIdx=-1,nextIdx=-1,playing=false,g=0,dragT=null;
 const els=[new Audio(),new Audio()];
@@ -174,10 +175,20 @@ function resize(){
 function target(h){
  const w=D.w,hh=D.h,bh=box[1]-box[0],oy=(box[0]+box[1])/2;
  const s0=rot?Math.min((W-48)/hh,bh/w):Math.min((W-96)/w,bh/hh);
+ if(free&&cam)return{x:cam.x,y:cam.y,s:cam.s,oy};
  if(!follow)return{x:w/2,y:hh/2,s:s0,oy};
  return{x:h[1],y:h[2],s:Math.max(s0*2.5,Math.min(W,H)/450),oy};
 }
 const sc=(x,y)=>rot?[W/2-(y-cam.y)*cam.s,cam.oy-(x-cam.x)*cam.s]:[W/2+(x-cam.x)*cam.s,cam.oy-(y-cam.y)*cam.s];
+const unsc=(px,py)=>rot?[cam.x-(py-cam.oy)/cam.s,cam.y-(px-W/2)/cam.s]:[cam.x+(px-W/2)/cam.s,cam.y-(py-cam.oy)/cam.s];
+function baseScale(){const f=follow,fr=free;follow=free=false;const s=target([0,0,0]).s;follow=f;free=fr;return s}
+function goFree(){if(!free){free=true;$('#vAll').setAttribute('aria-pressed',false);$('#vFol').setAttribute('aria-pressed',false)}}
+function panBy(dx,dy){goFree();if(rot){cam.y+=dx/cam.s;cam.x+=dy/cam.s}else{cam.x-=dx/cam.s;cam.y+=dy/cam.s}}
+function zoomAt(px,py,f){
+ if(!cam)return;goFree();const b=baseScale(),[wx,wy]=unsc(px,py);
+ cam.s=Math.max(b*.6,Math.min(b*60,cam.s*f));
+ if(rot){cam.x=wx+(py-cam.oy)/cam.s;cam.y=wy+(px-W/2)/cam.s}else{cam.x=wx-(px-W/2)/cam.s;cam.y=wy+(py-cam.oy)/cam.s}
+}
 
 function level(s){
  if(an&&playing){an.getByteTimeDomainData(tbuf);let q=0;for(const v of tbuf){const d=(v-128)/128;q+=d*d}return Math.min(1,Math.sqrt(q/tbuf.length)*5)}
@@ -272,19 +283,34 @@ function drawCompass(){
 const max4=()=>Math.max(innerWidth*.04,16);
 
 // interaction: map click seeks to the nearest point on the line
-let down=null;
-cv.addEventListener('pointerdown',e=>{down=[e.clientX,e.clientY]});
-cv.addEventListener('pointerup',e=>{
- if(!down||!T)return;const r=cv.getBoundingClientRect(),dx=e.clientX-down[0],dy=e.clientY-down[1];down=null;
- if(dx*dx+dy*dy>36)return;
- const px=e.clientX-r.left,py=e.clientY-r.top;let best=null,bd=28*28;
+const ptrs=new Map();let moved=0,pinch=null;
+cv.addEventListener('pointerdown',e=>{if(!cam)return;cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);moved=ptrs.size>1?99:0;pinch=null});
+cv.addEventListener('pointermove',e=>{
+ if(!ptrs.has(e.pointerId))return;
+ const prev=ptrs.get(e.pointerId),cur=[e.clientX,e.clientY];ptrs.set(e.pointerId,cur);
+ const r=cv.getBoundingClientRect();
+ if(ptrs.size===1){const dx=cur[0]-prev[0],dy=cur[1]-prev[1];moved+=Math.abs(dx)+Math.abs(dy);if(moved>5){cv.classList.add('drag');panBy(dx,dy)}}
+ else if(ptrs.size===2){
+  const [a,b]=[...ptrs.values()],mx=(a[0]+b[0])/2-r.left,my=(a[1]+b[1])/2-r.top,d=Math.hypot(a[0]-b[0],a[1]-b[1]);
+  if(pinch){panBy(mx-pinch.mx,my-pinch.my);zoomAt(mx,my,d/pinch.d)}
+  pinch={mx,my,d};
+ }
+});
+const endPtr=e=>{
+ if(!ptrs.has(e.pointerId))return;ptrs.delete(e.pointerId);pinch=null;cv.classList.remove('drag');
+ if(e.type!=='pointerup'||ptrs.size||moved>5||!T)return;
+ const r=cv.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;let best=null,bd=28*28;
  for(const p of T){const[x,y]=sc(p[1],p[2]),d=(x-px)**2+(y-py)**2;if(d<bd){bd=d;best=p}}
  if(best){seek(best[0]-offset);if(!playing)toggle()}
-});
+};
+cv.addEventListener('pointerup',endPtr);cv.addEventListener('pointercancel',endPtr);
+cv.addEventListener('wheel',e=>{if(!cam)return;e.preventDefault();const r=cv.getBoundingClientRect();zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*(e.deltaMode?0.05:0.0015)))},{passive:false});
+$('#zIn').addEventListener('click',()=>zoomAt(W/2,cam.oy,1.6));
+$('#zOut').addEventListener('click',()=>zoomAt(W/2,cam.oy,1/1.6));
 cv.addEventListener('pointermove',e=>{
- if(!T)return;const r=cv.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;let near=false;
+ if(!T||ptrs.size)return;const r=cv.getBoundingClientRect(),px=e.clientX-r.left,py=e.clientY-r.top;let near=false;
  for(let i=0;i<T.length;i+=2){const[x,y]=sc(T[i][1],T[i][2]);if((x-px)**2+(y-py)**2<400){near=true;break}}
- cv.style.cursor=near?'pointer':'default';
+ cv.style.cursor=near?'pointer':'';
 });
 const tlw=$('#tlw');
 const tlAt=e=>{const r=tlw.getBoundingClientRect();return Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*dur};
@@ -292,7 +318,7 @@ tlw.addEventListener('pointerdown',e=>{tlw.setPointerCapture(e.pointerId);dragT=
 tlw.addEventListener('pointermove',e=>{if(dragT!=null)dragT=tlAt(e)});
 tlw.addEventListener('pointerup',e=>{if(dragT==null)return;const t=tlAt(e);dragT=null;seek(t)});
 $('#play').addEventListener('click',toggle);
-const setView=f=>{follow=f;$('#vAll').setAttribute('aria-pressed',!f);$('#vFol').setAttribute('aria-pressed',f)};
+const setView=f=>{follow=f;free=false;$('#vAll').setAttribute('aria-pressed',!f);$('#vFol').setAttribute('aria-pressed',f)};
 $('#vAll').addEventListener('click',()=>setView(false));
 $('#vFol').addEventListener('click',()=>setView(true));
 $('#off').addEventListener('input',e=>{offset=+e.target.value;$('#offv').textContent=(offset>0?'+':'')+offset+' s';buildImprint()});
@@ -309,6 +335,8 @@ addEventListener('keydown',e=>{
  else if(e.key==='ArrowRight')seek(audioTime()+15);
  else if(e.key==='ArrowLeft')seek(audioTime()-15);
  else if(e.key==='f')setView(!follow);
+ else if(e.key==='+'||e.key==='=')zoomAt(W/2,cam.oy,1.6);
+ else if(e.key==='-')zoomAt(W/2,cam.oy,1/1.6);
 });
 const ro=new ResizeObserver(resize);ro.observe(wrap);ro.observe(tlw);
 
