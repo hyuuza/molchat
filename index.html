@@ -32,14 +32,15 @@ button:hover,.file:hover{border-color:rgba(233,227,208,.4)}
 button:focus-visible,.file:focus-within,input:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
 button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
 #status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:14px;color:var(--dim);pointer-events:none}
-.bar{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:clamp(12px,2vw,24px);align-items:center;padding:14px max(4vw,16px) 16px;background:var(--panel);border-top:1px solid var(--line)}
+.bar{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto auto;gap:clamp(12px,2vw,24px);align-items:center;padding:14px max(4vw,16px) 16px;background:var(--panel);border-top:1px solid var(--line)}
 #play{width:56px;height:56px;padding:0;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center}
 #play svg{width:22px;height:22px}
-.clock b{display:block;font:400 34px/1 "Instrument Serif",serif;font-variant-numeric:tabular-nums;white-space:nowrap}
+.clock{min-width:9.5em}.clock b{display:block;font:400 34px/1 "Instrument Serif",serif;font-variant-numeric:tabular-nums;white-space:nowrap}
 .clock small,.stats small{color:var(--dim);font-size:13px;white-space:nowrap}
 #tlw{position:relative;height:48px;cursor:pointer;touch-action:none}
 #tl{position:absolute;inset:0;width:100%;height:100%}
-.stats{display:grid;grid-template-columns:auto auto;gap:0 16px;text-align:right;font-variant-numeric:tabular-nums}
+.stats{display:grid;grid-template-columns:auto 5.5em;gap:0 16px;text-align:right;font-variant-numeric:tabular-nums}
+.vol{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:13px}.vol input{width:110px}.vol svg{width:20px;height:20px;flex:none}
 .stats b{font-weight:500;white-space:nowrap}
 details{grid-column:1/-1;font-size:14px;color:var(--dim)}
 summary{cursor:pointer;min-height:28px;display:inline-flex;align-items:center}
@@ -51,6 +52,7 @@ input[type=range]{width:200px;accent-color:var(--coral)}
 @media(max-width:700px){
  .bar{grid-template-columns:auto minmax(0,1fr);row-gap:10px}
  #tlw{grid-column:1/-1;grid-row:2}
+ .vol{grid-column:1/-1;grid-row:4}.vol input{flex:1}
  .stats{grid-column:1/-1;grid-row:3;grid-template-columns:repeat(4,auto);justify-content:space-between;text-align:left}
  #legend{display:none}
  #views{bottom:10px}
@@ -74,6 +76,7 @@ input[type=range]{width:200px;accent-color:var(--coral)}
   <button id="play" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor"><path id="pi" d="M7 4l13 8-13 8z"/></svg></button>
   <div class="clock"><b id="clk">09:18:54</b><small id="el">0:00:00 of 3:11:06</small></div>
   <div id="tlw" aria-label="Timeline: loudness over the whole recording. Click or drag to jump."><canvas id="tl"></canvas></div>
+  <label class="vol" title="Volume"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg><input id="vol" type="range" min="0" max="6" step="0.1" value="3" aria-label="Volume"><b id="volv">300%</b></label>
   <div class="stats"><small>walked</small><b id="km">0.00 km</b><small>elevation</small><b id="ele">191 m</b></div>
   <details><summary>Sync and sound quality</summary>
    <div class="opts">
@@ -93,6 +96,7 @@ let D,T,L,B,P=[],buckets=[],dur=0,offset=0,follow=false,free=false,rot=false;
 let W=0,H=0,TW=0,TH=0,dpr=1,cam=null,tlPix=[],box=[0,0];
 let mode='chunks',parts=[],cur=0,curIdx=-1,nextIdx=-1,playing=false,g=0,dragT=null;
 const els=[new Audio(),new Audio()];
+let gn=null,vol=3;try{const v=parseFloat(localStorage.getItem('onkraj-vol'));if(v>=0)vol=v}catch(e){}
 let ac=null,an=null,fbuf,tbuf,avg=0,lastRing=0,rings=[];
 
 const stops=[[239,122,90],[233,217,166],[166,230,242]];
@@ -136,7 +140,9 @@ function initAC(){
   ac=new(window.AudioContext||window.webkitAudioContext)();
   an=ac.createAnalyser();an.fftSize=1024;an.smoothingTimeConstant=.8;
   els.forEach(a=>ac.createMediaElementSource(a).connect(an));
-  an.connect(ac.destination);
+  els.forEach(a=>a.volume=1);gn=ac.createGain();gn.gain.value=vol;
+  const lim=ac.createDynamicsCompressor();lim.threshold.value=-3;lim.knee.value=0;lim.ratio.value=20;lim.attack.value=.003;lim.release.value=.25;
+  an.connect(gn);gn.connect(lim);lim.connect(ac.destination);
   fbuf=new Uint8Array(an.frequencyBinCount);tbuf=new Uint8Array(an.fftSize);
  }catch(e){an=null}
 }
@@ -166,11 +172,11 @@ function resize(){
  dpr=Math.min(2,devicePixelRatio||1);
  W=wrap.clientWidth;H=wrap.clientHeight;cv.width=W*dpr;cv.height=H*dpr;
  TW=tl.clientWidth;TH=tl.clientHeight;tl.width=TW*dpr;tl.height=TH*dpr;
- rot=H>W*1.15;
+ const wasRot=rot;rot=H>W*1.15;
  const hb=document.querySelector('header').getBoundingClientRect().bottom-wrap.getBoundingClientRect().top+20;
  box=(H-hb-90>H*.45)?[hb,H-90]:[24,H-90];
  if(L){const n=Math.max(1,Math.floor(TW/3));tlPix=Array.from({length:n},(_,i)=>{let m=0;const a=Math.floor(i/n*L.length),b=Math.floor((i+1)/n*L.length);for(let s=a;s<b;s++)m=Math.max(m,L[s]);return m/99})}
- cam=null;
+ if(rot!==wasRot)cam=null;
 }
 function target(h){
  const w=D.w,hh=D.h,bh=box[1]-box[0],oy=(box[0]+box[1])/2;
@@ -338,6 +344,12 @@ addEventListener('keydown',e=>{
  else if(e.key==='+'||e.key==='=')zoomAt(W/2,cam.oy,1.6);
  else if(e.key==='-')zoomAt(W/2,cam.oy,1/1.6);
 });
+const volIn=$('#vol');
+const applyVol=()=>{$('#volv').textContent=Math.round(vol*100)+'%';volIn.value=vol;
+ if(gn)gn.gain.setTargetAtTime(vol,ac.currentTime,.05);else els.forEach(a=>a.volume=Math.min(1,vol));
+ try{localStorage.setItem('onkraj-vol',vol)}catch(e){}};
+volIn.addEventListener('input',()=>{vol=+volIn.value;applyVol()});
+applyVol();
 const ro=new ResizeObserver(resize);ro.observe(wrap);ro.observe(tlw);
 
 fetch('data.json').then(r=>r.json()).then(d=>{
